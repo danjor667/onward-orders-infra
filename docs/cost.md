@@ -1,8 +1,15 @@
 # Cost
 
 Prices below are approximate on-demand list prices and differ by Region.
-**Check them in the AWS Pricing Calculator for the chosen Region before
-presenting them.** Monthly figures assume 730 hours.
+Monthly figures assume 730 hours.
+
+**Official estimate:** build and share one in the
+[AWS Pricing Calculator](https://calculator.aws/#/). It is free, needs no
+AWS account, and produces a public link you can hand to the Finance Lead.
+The inputs to enter are listed in [Building the estimate](#building-the-estimate)
+below.
+
+> Shared estimate link: _paste the link from "Share" in the calculator here_
 
 ## What runs all the time
 
@@ -37,9 +44,33 @@ An environment that exists costs about $85 to $100 a month even with no
 traffic. To pay nothing for an idle `dev` or `test` environment, delete its
 stacks and rebuild from the repositories when needed (see the README).
 
+## Building the estimate
+
+In the [AWS Pricing Calculator](https://calculator.aws/#/), choose *Create
+estimate*, set the Region, and add these services.
+
+| Service to add | What to enter | Price list |
+|---|---|---|
+| AWS Fargate | Linux, x86, 0.25 vCPU and 0.5 GB per task. 2 tasks always on; add up to 4 more for the busy hours you expect | [Fargate pricing](https://aws.amazon.com/fargate/pricing/) |
+| Elastic Load Balancing | 1 Application Load Balancer, with an estimate of requests and data per hour | [Elastic Load Balancing pricing](https://aws.amazon.com/elasticloadbalancing/pricing/) |
+| AWS PrivateLink (VPC endpoints) | 3 interface endpoints × 2 Availability Zones, a few GB of data per month. The S3 gateway endpoint is free | [PrivateLink pricing](https://aws.amazon.com/privatelink/pricing/) |
+| Amazon ECR | Storage for about 20 images | [ECR pricing](https://aws.amazon.com/ecr/pricing/) |
+| AWS CodePipeline | 1 V2 pipeline, with the number of releases per month | [CodePipeline pricing](https://aws.amazon.com/codepipeline/pricing/) |
+| Amazon CloudWatch | Log ingestion and 14 days of storage | [CloudWatch pricing](https://aws.amazon.com/cloudwatch/pricing/) |
+
+To show Finance the alternative that was rejected, add a second group with
+2 NAT gateways instead of the endpoints ([VPC pricing](https://aws.amazon.com/vpc/pricing/)).
+Then choose *Share* and paste the public link at the top of this page.
+
 ## Keeping spend visible
 
-Every resource carries `Project`, `Owner` and `Environment` tags. Activate
-them as cost allocation tags in Billing to split the bill by environment.
-The Client Profile also asks for budget alerts to stay active; those were
-set up at account level in week 1 and are not repeated here.
+- **Budget alert.** The Client Profile asks for budget alerts to stay active.
+  [AWS Budgets](https://aws.amazon.com/aws-cost-management/aws-budgets/)
+  emails you when actual or forecast spend passes a limit; budgets that only
+  send alerts are free. Set the monthly limit a little above the
+  estimate.
+- **Tags.** Every resource carries `Project`, `Owner` and `Environment`.
+  Activate them as cost allocation tags in Billing, then filter
+  [Cost Explorer](https://aws.amazon.com/aws-cost-management/aws-cost-explorer/)
+  by `Project = onward` to split the bill by environment and compare it
+  with the estimate.
