@@ -1,0 +1,17 @@
+# GitSync deployment file for stack onward-dev-orders-registry.
+template-file-path: templates/registry.yaml
+
+parameters:
+  Environment: dev
+  Purpose: orders
+  Owner: Jordan Steve
+  GitHubOwner: danjor667
+  AppRepositoryName: onward-orders-app
+  AppBranch: main
+  # Set to 'false' if this AWS account already has a GitHub OIDC provider.
+  CreateGitHubOidcProvider: 'true'
+
+tags:
+  Project: onward
+  Owner: Jordan Steve
+  Environment: dev

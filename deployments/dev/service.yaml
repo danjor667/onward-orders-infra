@@ -1,0 +1,19 @@
+# GitSync deployment file for stack onward-dev-orders-service.
+template-file-path: templates/service.yaml
+
+parameters:
+  Environment: dev
+  Purpose: orders
+  Owner: Jordan Steve
+  NetworkStackName: onward-dev-orders-network
+  RegistryStackName: onward-dev-orders-registry
+  MinTasks: '2'
+  MaxTasks: '6'
+  CpuTargetPercent: '60'
+  DeploymentConfigName: CodeDeployDefault.ECSCanary10Percent5Minutes
+  RollbackWindowMinutes: '10'
+
+tags:
+  Project: onward
+  Owner: Jordan Steve
+  Environment: dev

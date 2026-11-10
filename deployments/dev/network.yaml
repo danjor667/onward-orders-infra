@@ -1,0 +1,14 @@
+# GitSync deployment file for stack onward-dev-orders-network.
+template-file-path: templates/network.yaml
+
+parameters:
+  Environment: dev
+  Purpose: orders
+  Owner: Jordan Steve
+  VpcCidr: 10.20.0.0/16
+  ContainerPort: '8080'
+
+tags:
+  Project: onward
+  Owner: Jordan Steve
+  Environment: dev

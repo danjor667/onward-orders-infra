@@ -1,0 +1,238 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Onward Logistics orders - bootstrap step 2. Tells CloudFormation GitSync
+  which stacks to keep in sync with this repository, and gives it a role to
+  do so. After this, every stack is created and updated by a Git push.
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, test, prod]
+  Purpose:
+    Type: String
+    Default: orders
+  Owner:
+    Type: String
+  ConnectionStackName:
+    Type: String
+    Description: Name of the stack built from connection.yaml.
+  GitHubOwner:
+    Type: String
+    Description: GitHub user or organisation that owns the infrastructure repository.
+  InfraRepositoryName:
+    Type: String
+  Branch:
+    Type: String
+    Default: main
+  DeployServiceStack:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Default: 'false'
+    Description: >-
+      Leave false until the first application image is in ECR, then set to
+      true. The service cannot start without an image to run.
+
+Conditions:
+  ServiceStackEnabled: !Equals [!Ref DeployServiceStack, 'true']
+
+Resources:
+  RepositoryLink:
+    Type: AWS::CodeStarConnections::RepositoryLink
+    Properties:
+      ConnectionArn: {'Fn::ImportValue': !Sub '${ConnectionStackName}-ConnectionArn'}
+      OwnerId: !Ref GitHubOwner
+      RepositoryName: !Ref InfraRepositoryName
+      Tags:
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
+  # ------------------------------------------------------- GitSync role ----
+  # Two managed policies, kept apart so each can be read on its own:
+  #   gitsync  what GitSync needs to drive CloudFormation (from the AWS docs)
+  #   deploy   what the stacks in this repository are allowed to create
+  GitSyncPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub 'onward-${Environment}-${Purpose}-gitsync'
+      Description: Permissions CloudFormation GitSync needs to create and run change sets.
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: SyncToCloudFormation
+            Effect: Allow
+            Action:
+              - cloudformation:CreateChangeSet
+              - cloudformation:DeleteChangeSet
+              - cloudformation:DescribeChangeSet
+              - cloudformation:DescribeStackEvents
+              - cloudformation:DescribeStacks
+              - cloudformation:ExecuteChangeSet
+              - cloudformation:GetTemplate
+              - cloudformation:ListChangeSets
+              - cloudformation:ListStacks
+              - cloudformation:ValidateTemplate
+            Resource: '*'
+          - Sid: PolicyForManagedRules
+            Effect: Allow
+            Action:
+              - events:PutRule
+              - events:PutTargets
+            Resource: '*'
+            Condition:
+              StringEquals:
+                'events:ManagedBy': [cloudformation.sync.codeconnections.amazonaws.com]
+          - Sid: PolicyForDescribingRule
+            Effect: Allow
+            Action: events:DescribeRule
+            Resource: '*'
+
+  DeployPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub 'onward-${Environment}-${Purpose}-deploy'
+      Description: What the stacks in the infrastructure repository may create. IAM and S3 are limited to onward-* names.
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: ServicesUsedByTheTemplates
+            Effect: Allow
+            Action:
+              - application-autoscaling:*
+              - cloudwatch:*
+              - codedeploy:*
+              - codepipeline:*
+              - ec2:*
+              - ecr:*
+              - ecs:*
+              - elasticloadbalancing:*
+              - events:*
+              - logs:*
+            Resource: '*'
+          - Sid: OnwardBucketsOnly
+            Effect: Allow
+            Action: s3:*
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:s3:::onward-*'
+              - !Sub 'arn:${AWS::Partition}:s3:::onward-*/*'
+          - Sid: OnwardRolesOnly
+            Effect: Allow
+            Action:
+              - iam:CreateRole
+              - iam:DeleteRole
+              - iam:GetRole
+              - iam:ListAttachedRolePolicies
+              - iam:ListRolePolicies
+              - iam:PassRole
+              - iam:TagRole
+              - iam:UntagRole
+              - iam:UpdateAssumeRolePolicy
+              - iam:UpdateRole
+            Resource: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/onward-*'
+          - Sid: AttachOnlyKnownPolicies
+            Effect: Allow
+            Action:
+              - iam:AttachRolePolicy
+              - iam:DetachRolePolicy
+            Resource: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/onward-*'
+            Condition:
+              ArnLike:
+                'iam:PolicyARN':
+                  - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/onward-*'
+                  - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy'
+                  - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AWSCodeDeployRoleForECS'
+          - Sid: OnwardPoliciesOnly
+            Effect: Allow
+            Action:
+              - iam:CreatePolicy
+              - iam:CreatePolicyVersion
+              - iam:DeletePolicy
+              - iam:DeletePolicyVersion
+              - iam:GetPolicy
+              - iam:GetPolicyVersion
+              - iam:ListPolicyVersions
+              - iam:TagPolicy
+              - iam:UntagPolicy
+            Resource: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/onward-*'
+          - Sid: GitHubOidcProviderOnly
+            Effect: Allow
+            Action:
+              - iam:AddClientIDToOpenIDConnectProvider
+              - iam:CreateOpenIDConnectProvider
+              - iam:DeleteOpenIDConnectProvider
+              - iam:GetOpenIDConnectProvider
+              - iam:RemoveClientIDFromOpenIDConnectProvider
+              - iam:TagOpenIDConnectProvider
+              - iam:UntagOpenIDConnectProvider
+              - iam:UpdateOpenIDConnectProviderThumbprint
+            Resource: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com'
+          - Sid: ServiceLinkedRoles
+            Effect: Allow
+            Action: iam:CreateServiceLinkedRole
+            Resource: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:role/aws-service-role/*'
+
+  GitSyncRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'onward-${Environment}-${Purpose}-gitsync'
+      Description: Used by CloudFormation GitSync to deploy the stacks in the infrastructure repository.
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: CfnGitSyncTrustPolicy
+            Effect: Allow
+            Principal:
+              Service:
+                - cloudformation.sync.codeconnections.amazonaws.com
+                - cloudformation.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                'aws:SourceAccount': !Ref AWS::AccountId
+      ManagedPolicyArns:
+        - !Ref GitSyncPolicy
+        - !Ref DeployPolicy
+      Tags:
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
+  # ------------------------------------------------ One sync per stack ----
+  # Each sync watches one deployment file. That file names the template and
+  # holds the stack's parameters and tags.
+  NetworkSync:
+    Type: AWS::CodeStarConnections::SyncConfiguration
+    Properties:
+      SyncType: CFN_STACK_SYNC
+      ResourceName: !Sub 'onward-${Environment}-${Purpose}-network'
+      RepositoryLinkId: !GetAtt RepositoryLink.RepositoryLinkId
+      Branch: !Ref Branch
+      ConfigFile: !Sub 'deployments/${Environment}/network.yaml'
+      RoleArn: !GetAtt GitSyncRole.Arn
+      PublishDeploymentStatus: ENABLED
+      TriggerResourceUpdateOn: FILE_CHANGE
+
+  RegistrySync:
+    Type: AWS::CodeStarConnections::SyncConfiguration
+    Properties:
+      SyncType: CFN_STACK_SYNC
+      ResourceName: !Sub 'onward-${Environment}-${Purpose}-registry'
+      RepositoryLinkId: !GetAtt RepositoryLink.RepositoryLinkId
+      Branch: !Ref Branch
+      ConfigFile: !Sub 'deployments/${Environment}/registry.yaml'
+      RoleArn: !GetAtt GitSyncRole.Arn
+      PublishDeploymentStatus: ENABLED
+      TriggerResourceUpdateOn: FILE_CHANGE
+
+  ServiceSync:
+    Type: AWS::CodeStarConnections::SyncConfiguration
+    Condition: ServiceStackEnabled
+    Properties:
+      SyncType: CFN_STACK_SYNC
+      ResourceName: !Sub 'onward-${Environment}-${Purpose}-service'
+      RepositoryLinkId: !GetAtt RepositoryLink.RepositoryLinkId
+      Branch: !Ref Branch
+      ConfigFile: !Sub 'deployments/${Environment}/service.yaml'
+      RoleArn: !GetAtt GitSyncRole.Arn
+      PublishDeploymentStatus: ENABLED
+      TriggerResourceUpdateOn: FILE_CHANGE

@@ -1,0 +1,236 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Onward Logistics orders - registry. Everything GitHub Actions needs to hand
+  a release to AWS: the image repository, the artifact bucket, and a role
+  that GitHub assumes through OIDC (no stored access keys).
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, test, prod]
+  Purpose:
+    Type: String
+    Default: orders
+  Owner:
+    Type: String
+    Description: Value of the Owner tag (your name).
+  GitHubOwner:
+    Type: String
+    Description: GitHub user or organisation that owns the application repository.
+  AppRepositoryName:
+    Type: String
+    Description: Name of the application repository on GitHub.
+  AppBranch:
+    Type: String
+    Default: main
+    Description: Only this branch may assume the release role.
+  CreateGitHubOidcProvider:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Default: 'true'
+    Description: >-
+      An AWS account can hold only one GitHub OIDC provider. Set to false if
+      the account already has one; the existing provider is then reused.
+
+Conditions:
+  CreateOidcProvider: !Equals [!Ref CreateGitHubOidcProvider, 'true']
+
+Resources:
+  # ---------------------------------------------------- Image repository ----
+  Repository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub 'onward-${Environment}-${Purpose}'
+      # Every release is tagged with its Git commit and that tag can never be
+      # overwritten, so a tag always means the same image. Only "latest" may
+      # move: it is the tag the delivery pipeline watches.
+      ImageTagMutability: IMMUTABLE_WITH_EXCLUSION
+      ImageTagMutabilityExclusionFilters:
+        - ImageTagMutabilityExclusionFilterType: WILDCARD
+          ImageTagMutabilityExclusionFilterValue: latest
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: AES256
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Remove untagged images after 7 days",
+                "selection": {
+                  "tagStatus": "untagged",
+                  "countType": "sinceImagePushed",
+                  "countUnit": "days",
+                  "countNumber": 7
+                },
+                "action": {"type": "expire"}
+              },
+              {
+                "rulePriority": 2,
+                "description": "Keep the 20 most recent images for rollback",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 20
+                },
+                "action": {"type": "expire"}
+              }
+            ]
+          }
+      Tags:
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
+  # ----------------------------------------------------- Artifact bucket ----
+  # Two uses, two prefixes:
+  #   releases/            release bundle uploaded by GitHub Actions
+  #                        (taskdef.json + appspec.yaml)
+  #   onward-<env>-.../    working files CodePipeline passes between stages
+  # Versioning is required for the bucket to act as a CodePipeline source.
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      # Bucket names are global, so the account ID is appended to the standard
+      # onward-environment-purpose name.
+      BucketName: !Sub 'onward-${Environment}-${Purpose}-artifacts-${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-old-versions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 30
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+          - Id: expire-pipeline-working-files
+            Status: Enabled
+            Prefix: !Sub 'onward-${Environment}-${Purpose}/'
+            ExpirationInDays: 30
+      Tags:
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
+  # A bucket policy is a resource policy on the bucket, not an inline IAM
+  # identity policy.
+  ArtifactBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ArtifactBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyUnencryptedTransport
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt ArtifactBucket.Arn
+              - !Sub '${ArtifactBucket.Arn}/*'
+            Condition:
+              Bool:
+                'aws:SecureTransport': 'false'
+
+  # --------------------------------------- GitHub Actions access (OIDC) ----
+  # GitHub proves which repository and branch a workflow runs from with a
+  # short-lived signed token. AWS exchanges that token for credentials that
+  # expire within the hour. Nothing long-lived is stored in GitHub.
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: CreateOidcProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList: [sts.amazonaws.com]
+      Tags:
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
+  GitHubActionsPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub 'onward-${Environment}-${Purpose}-github-actions'
+      Description: Lets the application repository push images and upload the release bundle. Nothing else.
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: EcrLogin
+            Effect: Allow
+            Action: ecr:GetAuthorizationToken
+            Resource: '*'   # this action does not support resource scoping
+          - Sid: PushImagesToThisRepositoryOnly
+            Effect: Allow
+            Action:
+              - ecr:BatchCheckLayerAvailability
+              - ecr:BatchGetImage
+              - ecr:CompleteLayerUpload
+              - ecr:InitiateLayerUpload
+              - ecr:PutImage
+              - ecr:UploadLayerPart
+            Resource: !GetAtt Repository.Arn
+          - Sid: UploadReleaseBundle
+            Effect: Allow
+            Action: s3:PutObject
+            Resource: !Sub '${ArtifactBucket.Arn}/releases/*'
+
+  GitHubActionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'onward-${Environment}-${Purpose}-github-actions'
+      Description: Assumed by GitHub Actions in the application repository through OIDC.
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If
+                - CreateOidcProvider
+                - !Ref GitHubOidcProvider
+                - !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com'
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                'token.actions.githubusercontent.com:aud': sts.amazonaws.com
+                # Only this repository, and only its release branch.
+                'token.actions.githubusercontent.com:sub': !Sub 'repo:${GitHubOwner}/${AppRepositoryName}:ref:refs/heads/${AppBranch}'
+      ManagedPolicyArns:
+        - !Ref GitHubActionsPolicy
+      Tags:
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
+# The service stack reads these with Fn::ImportValue.
+Outputs:
+  RepositoryName:
+    Value: !Ref Repository
+    Export: {Name: !Sub '${AWS::StackName}-RepositoryName'}
+  RepositoryArn:
+    Value: !GetAtt Repository.Arn
+    Export: {Name: !Sub '${AWS::StackName}-RepositoryArn'}
+  RepositoryUri:
+    Value: !GetAtt Repository.RepositoryUri
+    Export: {Name: !Sub '${AWS::StackName}-RepositoryUri'}
+  ArtifactBucketName:
+    Value: !Ref ArtifactBucket
+    Export: {Name: !Sub '${AWS::StackName}-ArtifactBucketName'}
+  ArtifactBucketArn:
+    Value: !GetAtt ArtifactBucket.Arn
+    Export: {Name: !Sub '${AWS::StackName}-ArtifactBucketArn'}
+  GitHubActionsRoleArn:
+    Description: Not secret. The application workflow builds this ARN from the account ID.
+    Value: !GetAtt GitHubActionsRole.Arn

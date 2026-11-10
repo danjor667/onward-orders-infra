@@ -1,0 +1,593 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Onward Logistics orders - service and delivery. The public load balancer,
+  the Fargate service in private subnets, autoscaling, and the delivery chain
+  (EventBridge -> CodePipeline -> CodeDeploy blue/green).
+
+# Reading order:
+#   1. Load balancer      the single public entry point
+#   2. ECS                cluster, task definition, service
+#   3. Autoscaling        grow on busy days, shrink afterwards
+#   4. CodeDeploy         blue/green releases with automatic rollback
+#   5. CodePipeline       takes a pushed image and hands it to CodeDeploy
+#   6. EventBridge        starts the pipeline when a new image arrives
+#
+# This stack needs an image in ECR before it is created, otherwise the
+# service has nothing to run. See "Building from scratch" in the README.
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, test, prod]
+  Purpose:
+    Type: String
+    Default: orders
+  Owner:
+    Type: String
+    Description: Value of the Owner tag (your name).
+  NetworkStackName:
+    Type: String
+    Description: Name of the stack built from network.yaml.
+  RegistryStackName:
+    Type: String
+    Description: Name of the stack built from registry.yaml.
+  ImageTag:
+    Type: String
+    Default: latest
+    Description: Tag the pipeline watches, and the image used for the very first start.
+  ContainerName:
+    Type: String
+    Default: orders
+    Description: Must match the container name in the application repository's deploy/taskdef.json.
+  TaskCpu:
+    Type: String
+    Default: '256'
+    Description: Used for the first start only. Afterwards deploy/taskdef.json in the application repository decides.
+  TaskMemory:
+    Type: String
+    Default: '512'
+    Description: Used for the first start only. Afterwards deploy/taskdef.json in the application repository decides.
+  MinTasks:
+    Type: Number
+    Default: 2
+    MinValue: 2
+    Description: Never fewer than two, so one task can run in each Availability Zone.
+  MaxTasks:
+    Type: Number
+    Default: 6
+    Description: Upper limit on busy days. Also the upper limit on what the service can cost.
+  CpuTargetPercent:
+    Type: Number
+    Default: 60
+    Description: Autoscaling adds tasks above this average CPU and removes them below it.
+  HealthCheckPath:
+    Type: String
+    Default: /health
+  DeploymentConfigName:
+    Type: String
+    Default: CodeDeployDefault.ECSCanary10Percent5Minutes
+    AllowedValues:
+      - CodeDeployDefault.ECSAllAtOnce
+      - CodeDeployDefault.ECSCanary10Percent5Minutes
+      - CodeDeployDefault.ECSCanary10Percent15Minutes
+      - CodeDeployDefault.ECSLinear10PercentEvery1Minutes
+      - CodeDeployDefault.ECSLinear10PercentEvery3Minutes
+    Description: How traffic moves from the old version to the new one.
+  RollbackWindowMinutes:
+    Type: Number
+    Default: 10
+    Description: >-
+      How long the old version stays running after a release, ready for an
+      instant rollback. Both versions are billed during this window.
+  LogRetentionDays:
+    Type: Number
+    Default: 14
+
+Resources:
+  # ====================================================== 1. Load balancer ==
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub 'onward-${Environment}-${Purpose}'
+      Type: application
+      Scheme: internet-facing
+      Subnets: !Split [',', {'Fn::ImportValue': !Sub '${NetworkStackName}-PublicSubnetIds'}]
+      SecurityGroups:
+        - {'Fn::ImportValue': !Sub '${NetworkStackName}-LoadBalancerSecurityGroupId'}
+      LoadBalancerAttributes:
+        - {Key: routing.http.drop_invalid_header_fields.enabled, Value: 'true'}
+        - {Key: idle_timeout.timeout_seconds, Value: '60'}
+      Tags:
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
+  # Blue/green needs two target groups. At any moment one serves customers
+  # and the other is empty, waiting for the next release. CodeDeploy swaps
+  # them on each release, so "blue" and "green" are just two names: do not
+  # assume blue is the live one.
+  BlueTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub 'onward-${Environment}-${Purpose}-blue'
+      VpcId: {'Fn::ImportValue': !Sub '${NetworkStackName}-VpcId'}
+      TargetType: ip   # Fargate tasks register by IP address
+      Protocol: HTTP
+      Port: {'Fn::ImportValue': !Sub '${NetworkStackName}-ContainerPort'}
+      HealthCheckPath: !Ref HealthCheckPath
+      HealthCheckIntervalSeconds: 10
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      Matcher: {HttpCode: '200'}
+      TargetGroupAttributes:
+        # How long in-flight requests get to finish before a task is removed.
+        - {Key: deregistration_delay.timeout_seconds, Value: '30'}
+      Tags:
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
+  GreenTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub 'onward-${Environment}-${Purpose}-green'
+      VpcId: {'Fn::ImportValue': !Sub '${NetworkStackName}-VpcId'}
+      TargetType: ip
+      Protocol: HTTP
+      Port: {'Fn::ImportValue': !Sub '${NetworkStackName}-ContainerPort'}
+      HealthCheckPath: !Ref HealthCheckPath
+      HealthCheckIntervalSeconds: 10
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      Matcher: {HttpCode: '200'}
+      TargetGroupAttributes:
+        - {Key: deregistration_delay.timeout_seconds, Value: '30'}
+      Tags:
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
+  # The one public listener. After the first release CodeDeploy owns where
+  # it forwards, so do not change DefaultActions here.
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Protocol: HTTP
+      Port: 80
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref BlueTargetGroup
+
+  # ================================================================ 2. ECS ==
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub 'onward-${Environment}-${Purpose}'
+      Tags:
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub '/ecs/onward-${Environment}-${Purpose}'
+      RetentionInDays: !Ref LogRetentionDays
+      Tags:
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
+  # Used by ECS itself to pull the image and write logs. The application
+  # code never sees these permissions. There is no task role because the
+  # application calls no AWS service.
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'onward-${Environment}-${Purpose}-task-execution'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ecs-tasks.amazonaws.com}
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                'aws:SourceAccount': !Ref AWS::AccountId
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy'
+      Tags:
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
+  # SEED ONLY. This definition starts the service the first time. Every
+  # release after that registers a new revision from deploy/taskdef.json in
+  # the application repository, through the pipeline.
+  # Do not edit this resource after the first deployment: ECS refuses task
+  # definition changes from CloudFormation on a blue/green service and the
+  # stack update would fail. Change deploy/taskdef.json instead, so the
+  # change is released with blue/green like any other.
+  SeedTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub 'onward-${Environment}-${Purpose}'
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      Cpu: !Ref TaskCpu
+      Memory: !Ref TaskMemory
+      RuntimePlatform:
+        OperatingSystemFamily: LINUX
+        CpuArchitecture: X86_64
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: !Ref ContainerName
+          Image: !Sub
+            - '${RepositoryUri}:${ImageTag}'
+            - RepositoryUri: {'Fn::ImportValue': !Sub '${RegistryStackName}-RepositoryUri'}
+          Essential: true
+          PortMappings:
+            - ContainerPort: {'Fn::ImportValue': !Sub '${NetworkStackName}-ContainerPort'}
+              Protocol: tcp
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: !Ref ContainerName
+      Tags:
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
+  Service:
+    Type: AWS::ECS::Service
+    DependsOn: Listener   # the target group must be attached to the load balancer first
+    Properties:
+      ServiceName: !Sub 'onward-${Environment}-${Purpose}'
+      Cluster: !Ref Cluster
+      LaunchType: FARGATE
+      PlatformVersion: LATEST
+      TaskDefinition: !Ref SeedTaskDefinition
+      DesiredCount: !Ref MinTasks
+      DeploymentController:
+        Type: CODE_DEPLOY   # releases are performed by CodeDeploy, not by ECS rolling updates
+      HealthCheckGracePeriodSeconds: 60
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          # Two private subnets in two zones. ECS spreads tasks across them,
+          # so losing a zone leaves at least one task serving.
+          Subnets: !Split [',', {'Fn::ImportValue': !Sub '${NetworkStackName}-PrivateSubnetIds'}]
+          SecurityGroups:
+            - {'Fn::ImportValue': !Sub '${NetworkStackName}-TaskSecurityGroupId'}
+      LoadBalancers:
+        - ContainerName: !Ref ContainerName
+          ContainerPort: {'Fn::ImportValue': !Sub '${NetworkStackName}-ContainerPort'}
+          TargetGroupArn: !Ref BlueTargetGroup
+      EnableECSManagedTags: true
+      PropagateTags: SERVICE
+      Tags:
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
+  # ======================================================== 3. Autoscaling ==
+  ScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      ServiceNamespace: ecs
+      ScalableDimension: ecs:service:DesiredCount
+      ResourceId: !Sub 'service/${Cluster}/${Service.Name}'
+      MinCapacity: !Ref MinTasks
+      MaxCapacity: !Ref MaxTasks
+
+  # CPU is the trigger because it follows the service wherever it runs.
+  # Requests-per-target would need a fixed target group, and blue/green
+  # swaps the target group on every release.
+  CpuScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: !Sub 'onward-${Environment}-${Purpose}-cpu'
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref ScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        TargetValue: !Ref CpuTargetPercent
+        ScaleOutCooldown: 60    # add capacity quickly
+        ScaleInCooldown: 120    # remove it cautiously
+
+  # ========================================================= 4. CodeDeploy ==
+  CodeDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'onward-${Environment}-${Purpose}-codedeploy'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: codedeploy.amazonaws.com}
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                'aws:SourceAccount': !Ref AWS::AccountId
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AWSCodeDeployRoleForECS'
+      Tags:
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
+  # If the application returns server errors while a release is in
+  # progress, CodeDeploy stops and sends all traffic back to the old version.
+  ServerErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'onward-${Environment}-${Purpose}-server-errors'
+      AlarmDescription: The application returned 5xx responses. Triggers rollback during a release.
+      Namespace: AWS/ApplicationELB
+      MetricName: HTTPCode_Target_5XX_Count
+      Dimensions:
+        - {Name: LoadBalancer, Value: !GetAtt LoadBalancer.LoadBalancerFullName}
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      Tags:
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
+  CodeDeployApplication:
+    Type: AWS::CodeDeploy::Application
+    Properties:
+      ApplicationName: !Sub 'onward-${Environment}-${Purpose}'
+      ComputePlatform: ECS
+      Tags:
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
+  DeploymentGroup:
+    Type: AWS::CodeDeploy::DeploymentGroup
+    Properties:
+      ApplicationName: !Ref CodeDeployApplication
+      DeploymentGroupName: !Sub 'onward-${Environment}-${Purpose}'
+      ServiceRoleArn: !GetAtt CodeDeployRole.Arn
+      DeploymentConfigName: !Ref DeploymentConfigName
+      DeploymentStyle:
+        DeploymentType: BLUE_GREEN
+        DeploymentOption: WITH_TRAFFIC_CONTROL
+      ECSServices:
+        - ClusterName: !Ref Cluster
+          ServiceName: !GetAtt Service.Name
+      LoadBalancerInfo:
+        TargetGroupPairInfoList:
+          - ProdTrafficRoute:
+              ListenerArns: [!Ref Listener]
+            TargetGroups:
+              - Name: !GetAtt BlueTargetGroup.TargetGroupName
+              - Name: !GetAtt GreenTargetGroup.TargetGroupName
+      BlueGreenDeploymentConfiguration:
+        DeploymentReadyOption:
+          ActionOnTimeout: CONTINUE_DEPLOYMENT   # no manual approval step
+        TerminateBlueInstancesOnDeploymentSuccess:
+          Action: TERMINATE
+          TerminationWaitTimeInMinutes: !Ref RollbackWindowMinutes
+      AutoRollbackConfiguration:
+        Enabled: true
+        Events:
+          - DEPLOYMENT_FAILURE          # e.g. new tasks never become healthy
+          - DEPLOYMENT_STOP_ON_ALARM    # the alarm below fired
+          - DEPLOYMENT_STOP_ON_REQUEST  # an engineer pressed "stop and roll back"
+      AlarmConfiguration:
+        Enabled: true
+        Alarms:
+          - Name: !Ref ServerErrorAlarm
+      Tags:
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
+  # ======================================================= 5. CodePipeline ==
+  PipelinePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub 'onward-${Environment}-${Purpose}-pipeline'
+      Description: What the delivery pipeline may do - read the release, register it, start a blue/green deployment.
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: ArtifactBucket
+            Effect: Allow
+            Action:
+              - s3:GetBucketLocation
+              - s3:GetBucketVersioning
+              - s3:GetObject
+              - s3:GetObjectVersion
+              - s3:ListBucket
+              - s3:PutObject
+            Resource:
+              - {'Fn::ImportValue': !Sub '${RegistryStackName}-ArtifactBucketArn'}
+              - !Sub
+                - '${BucketArn}/*'
+                - BucketArn: {'Fn::ImportValue': !Sub '${RegistryStackName}-ArtifactBucketArn'}
+          - Sid: ReadImageDetails
+            Effect: Allow
+            Action: ecr:DescribeImages
+            Resource: {'Fn::ImportValue': !Sub '${RegistryStackName}-RepositoryArn'}
+          - Sid: RegisterTaskDefinition
+            Effect: Allow
+            Action:
+              - ecs:RegisterTaskDefinition
+              - ecs:TagResource
+            Resource: '*'   # RegisterTaskDefinition does not support resource scoping
+          - Sid: PassExecutionRoleToEcsOnly
+            Effect: Allow
+            Action: iam:PassRole
+            Resource: !GetAtt TaskExecutionRole.Arn
+            Condition:
+              StringEquals:
+                'iam:PassedToService': ecs-tasks.amazonaws.com
+          - Sid: StartBlueGreenDeployment
+            Effect: Allow
+            Action:
+              - codedeploy:CreateDeployment
+              - codedeploy:GetApplication
+              - codedeploy:GetApplicationRevision
+              - codedeploy:GetDeployment
+              - codedeploy:RegisterApplicationRevision
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:codedeploy:${AWS::Region}:${AWS::AccountId}:application:onward-${Environment}-${Purpose}'
+              - !Sub 'arn:${AWS::Partition}:codedeploy:${AWS::Region}:${AWS::AccountId}:deploymentgroup:onward-${Environment}-${Purpose}/onward-${Environment}-${Purpose}'
+          - Sid: ReadDeploymentConfig
+            Effect: Allow
+            Action: codedeploy:GetDeploymentConfig
+            Resource: !Sub 'arn:${AWS::Partition}:codedeploy:${AWS::Region}:${AWS::AccountId}:deploymentconfig:*'
+
+  PipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'onward-${Environment}-${Purpose}-pipeline'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: codepipeline.amazonaws.com}
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                'aws:SourceAccount': !Ref AWS::AccountId
+      ManagedPolicyArns:
+        - !Ref PipelinePolicy
+      Tags:
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
+  # How a release is handed over:
+  #   GitHub Actions uploads releases/release.zip (taskdef.json, appspec.yaml)
+  #   and then pushes the image. The image push starts this pipeline (see
+  #   section 6). The pipeline collects both and passes them to CodeDeploy,
+  #   which writes the exact image into the task definition, starts the new
+  #   version beside the old one and shifts traffic.
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub 'onward-${Environment}-${Purpose}'
+      PipelineType: V2
+      ExecutionMode: QUEUED   # releases run one after another, never in parallel
+      RoleArn: !GetAtt PipelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: {'Fn::ImportValue': !Sub '${RegistryStackName}-ArtifactBucketName'}
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: Image
+              ActionTypeId: {Category: Source, Owner: AWS, Provider: ECR, Version: '1'}
+              Configuration:
+                RepositoryName: {'Fn::ImportValue': !Sub '${RegistryStackName}-RepositoryName'}
+                ImageTag: !Ref ImageTag
+              OutputArtifacts: [{Name: Image}]
+            - Name: ReleaseBundle
+              ActionTypeId: {Category: Source, Owner: AWS, Provider: S3, Version: '1'}
+              Configuration:
+                S3Bucket: {'Fn::ImportValue': !Sub '${RegistryStackName}-ArtifactBucketName'}
+                S3ObjectKey: releases/release.zip
+                PollForSourceChanges: 'false'   # started by EventBridge, not by polling
+              OutputArtifacts: [{Name: ReleaseBundle}]
+        - Name: Deploy
+          Actions:
+            - Name: BlueGreen
+              ActionTypeId: {Category: Deploy, Owner: AWS, Provider: CodeDeployToECS, Version: '1'}
+              InputArtifacts: [{Name: ReleaseBundle}, {Name: Image}]
+              Configuration:
+                ApplicationName: !Ref CodeDeployApplication
+                DeploymentGroupName: !Ref DeploymentGroup
+                TaskDefinitionTemplateArtifact: ReleaseBundle
+                TaskDefinitionTemplatePath: taskdef.json
+                AppSpecTemplateArtifact: ReleaseBundle
+                AppSpecTemplatePath: appspec.yaml
+                # Replaces the <IMAGE1_NAME> placeholder in taskdef.json with
+                # the image that was just pushed, pinned by digest.
+                Image1ArtifactName: Image
+                Image1ContainerName: IMAGE1_NAME
+      Tags:
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
+  # ======================================================== 6. EventBridge ==
+  PipelineTriggerPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub 'onward-${Environment}-${Purpose}-pipeline-trigger'
+      Description: Lets EventBridge start this one pipeline.
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: codepipeline:StartPipelineExecution
+            Resource: !Sub 'arn:${AWS::Partition}:codepipeline:${AWS::Region}:${AWS::AccountId}:${Pipeline}'
+
+  PipelineTriggerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'onward-${Environment}-${Purpose}-pipeline-trigger'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: events.amazonaws.com}
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                'aws:SourceAccount': !Ref AWS::AccountId
+      ManagedPolicyArns:
+        - !Ref PipelineTriggerPolicy
+      Tags:
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
+  # ECR announces every successful push. This rule picks out pushes of the
+  # watched tag to this repository and starts the pipeline.
+  ImagePushedRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub 'onward-${Environment}-${Purpose}-image-pushed'
+      Description: Starts the delivery pipeline when a new application image is pushed.
+      State: ENABLED
+      EventPattern:
+        source: [aws.ecr]
+        detail-type: [ECR Image Action]
+        detail:
+          action-type: [PUSH]
+          result: [SUCCESS]
+          repository-name:
+            - {'Fn::ImportValue': !Sub '${RegistryStackName}-RepositoryName'}
+          image-tag: [!Ref ImageTag]
+      Targets:
+        - Id: start-pipeline
+          Arn: !Sub 'arn:${AWS::Partition}:codepipeline:${AWS::Region}:${AWS::AccountId}:${Pipeline}'
+          RoleArn: !GetAtt PipelineTriggerRole.Arn
+
+Outputs:
+  ApplicationUrl:
+    Description: The single public address of the order system.
+    Value: !Sub 'http://${LoadBalancer.DNSName}'
+  PipelineName:
+    Value: !Ref Pipeline
+  ClusterName:
+    Value: !Ref Cluster
+  ServiceName:
+    Value: !GetAtt Service.Name

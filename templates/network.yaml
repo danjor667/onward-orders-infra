@@ -1,0 +1,337 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Onward Logistics orders - network. A VPC across two Availability Zones with
+  public subnets for the load balancer only, private subnets with no route to
+  the internet for the application, and VPC endpoints so the application
+  reaches AWS services over the AWS network (no NAT gateway).
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, test, prod]
+  Purpose:
+    Type: String
+    Default: orders
+  Owner:
+    Type: String
+    Description: Value of the Owner tag (your name).
+  VpcCidr:
+    Type: String
+    Default: 10.20.0.0/16
+  ContainerPort:
+    Type: Number
+    Default: 8080
+    Description: Port the application container listens on.
+  PublicIngressCidr:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: Who may reach the load balancer on port 80.
+
+Resources:
+  # ---------------------------------------------------------------- VPC ----
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsSupport: true     # both DNS settings are required for
+      EnableDnsHostnames: true   # private DNS on the interface endpoints
+      Tags:
+        - {Key: Name, Value: !Sub 'onward-${Environment}-${Purpose}-vpc'}
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - {Key: Name, Value: !Sub 'onward-${Environment}-${Purpose}-igw'}
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  # ----------------------------------------- Public subnets (ALB only) ----
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: !Select [0, !Cidr [!Ref VpcCidr, 4, 8]]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - {Key: Name, Value: !Sub 'onward-${Environment}-${Purpose}-public-a'}
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: !Select [1, !Cidr [!Ref VpcCidr, 4, 8]]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - {Key: Name, Value: !Sub 'onward-${Environment}-${Purpose}-public-b'}
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - {Key: Name, Value: !Sub 'onward-${Environment}-${Purpose}-public'}
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetA
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetB
+      RouteTableId: !Ref PublicRouteTable
+
+  # ------------------------------- Private subnets (application tasks) ----
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: !Select [2, !Cidr [!Ref VpcCidr, 4, 8]]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - {Key: Name, Value: !Sub 'onward-${Environment}-${Purpose}-private-a'}
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: !Select [3, !Cidr [!Ref VpcCidr, 4, 8]]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - {Key: Name, Value: !Sub 'onward-${Environment}-${Purpose}-private-b'}
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
+  # The private route table deliberately has NO default route: no internet
+  # gateway, no NAT gateway. The only route added to it is the S3 gateway
+  # endpoint below. This is what "no path to the internet" means in practice.
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - {Key: Name, Value: !Sub 'onward-${Environment}-${Purpose}-private'}
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
+  PrivateSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetA
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetB
+      RouteTableId: !Ref PrivateRouteTable
+
+  # ---------------------------------------------------- Security groups ----
+  # Traffic chain: internet -> LoadBalancer SG -> Task SG -> Endpoint SG.
+  # Each group only accepts traffic from the group before it.
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub 'onward-${Environment}-${Purpose}-alb'
+      GroupDescription: Public entry point. HTTP in from customers, out only to the application tasks.
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - Description: HTTP from customers and merchants
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: !Ref PublicIngressCidr
+      SecurityGroupEgress:
+        - Description: To the application tasks only
+          IpProtocol: tcp
+          FromPort: !Ref ContainerPort
+          ToPort: !Ref ContainerPort
+          DestinationSecurityGroupId: !Ref TaskSecurityGroup
+      Tags:
+        - {Key: Name, Value: !Sub 'onward-${Environment}-${Purpose}-alb'}
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
+  TaskSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub 'onward-${Environment}-${Purpose}-task'
+      GroupDescription: Application tasks. In from the load balancer only, out over HTTPS to AWS services only.
+      VpcId: !Ref Vpc
+      SecurityGroupEgress:
+        # The S3 gateway endpoint has no security group of its own, so this
+        # rule cannot name it. It is safe because the private route table has
+        # no internet route: HTTPS can only reach the interface endpoints and
+        # the S3 gateway endpoint.
+        - Description: HTTPS to VPC endpoints (ECR, logs) and the S3 gateway endpoint
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - {Key: Name, Value: !Sub 'onward-${Environment}-${Purpose}-task'}
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
+  # Separate resource (not inline) to avoid a circular reference between the
+  # load balancer group and the task group.
+  TaskIngressFromLoadBalancer:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref TaskSecurityGroup
+      Description: Application port from the load balancer only
+      IpProtocol: tcp
+      FromPort: !Ref ContainerPort
+      ToPort: !Ref ContainerPort
+      SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup
+
+  EndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub 'onward-${Environment}-${Purpose}-endpoints'
+      GroupDescription: Interface VPC endpoints. HTTPS in from the application tasks only.
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - Description: HTTPS from the application tasks
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref TaskSecurityGroup
+      SecurityGroupEgress:
+        # Endpoints never start connections. This placeholder replaces the
+        # default "allow all outbound" rule.
+        - Description: No outbound traffic
+          IpProtocol: '-1'
+          CidrIp: 127.0.0.1/32
+      Tags:
+        - {Key: Name, Value: !Sub 'onward-${Environment}-${Purpose}-endpoints'}
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
+  # ------------------------------------------------------ VPC endpoints ----
+  # What Fargate needs to start a task without internet access:
+  #   ecr.api + ecr.dkr  authenticate and pull the image manifest
+  #   s3 (gateway)       download the image layers (ECR stores layers in S3)
+  #   logs               ship container logs to CloudWatch
+  # The S3 gateway endpoint is free. Each interface endpoint is billed per
+  # hour per Availability Zone (see docs/cost.md).
+  S3GatewayEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Gateway
+      VpcId: !Ref Vpc
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.s3'
+      RouteTableIds: [!Ref PrivateRouteTable]
+      Tags:
+        - {Key: Name, Value: !Sub 'onward-${Environment}-${Purpose}-s3'}
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
+  EcrApiEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Interface
+      VpcId: !Ref Vpc
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ecr.api'
+      PrivateDnsEnabled: true
+      SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+      SecurityGroupIds: [!Ref EndpointSecurityGroup]
+      Tags:
+        - {Key: Name, Value: !Sub 'onward-${Environment}-${Purpose}-ecr-api'}
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
+  EcrDkrEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Interface
+      VpcId: !Ref Vpc
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ecr.dkr'
+      PrivateDnsEnabled: true
+      SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+      SecurityGroupIds: [!Ref EndpointSecurityGroup]
+      Tags:
+        - {Key: Name, Value: !Sub 'onward-${Environment}-${Purpose}-ecr-dkr'}
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
+  LogsEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Interface
+      VpcId: !Ref Vpc
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.logs'
+      PrivateDnsEnabled: true
+      SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
+      SecurityGroupIds: [!Ref EndpointSecurityGroup]
+      Tags:
+        - {Key: Name, Value: !Sub 'onward-${Environment}-${Purpose}-logs'}
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
+# The service stack reads these with Fn::ImportValue.
+Outputs:
+  VpcId:
+    Value: !Ref Vpc
+    Export: {Name: !Sub '${AWS::StackName}-VpcId'}
+  PublicSubnetIds:
+    Value: !Join [',', [!Ref PublicSubnetA, !Ref PublicSubnetB]]
+    Export: {Name: !Sub '${AWS::StackName}-PublicSubnetIds'}
+  PrivateSubnetIds:
+    Value: !Join [',', [!Ref PrivateSubnetA, !Ref PrivateSubnetB]]
+    Export: {Name: !Sub '${AWS::StackName}-PrivateSubnetIds'}
+  LoadBalancerSecurityGroupId:
+    Value: !Ref LoadBalancerSecurityGroup
+    Export: {Name: !Sub '${AWS::StackName}-LoadBalancerSecurityGroupId'}
+  TaskSecurityGroupId:
+    Value: !Ref TaskSecurityGroup
+    Export: {Name: !Sub '${AWS::StackName}-TaskSecurityGroupId'}
+  ContainerPort:
+    Value: !Ref ContainerPort
+    Export: {Name: !Sub '${AWS::StackName}-ContainerPort'}
