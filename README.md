@@ -37,6 +37,7 @@ flowchart LR
     CD --> TASKS
     ALB --> TASKS
     TASKS --> VPCE
+    TASKS -- "gateway endpoint" --> DDB[(DynamoDB orders table)]
   end
 
   USERS((Customers)) --> ALB
@@ -54,9 +55,9 @@ A change to the application travels like this:
 
 | Path | What it is |
 |---|---|
-| `templates/network.yaml` | VPC, subnets, security groups, VPC endpoints |
+| `templates/network.yaml` | VPC, subnets, security groups, VPC endpoints (ECR, logs, S3, DynamoDB) |
 | `templates/registry.yaml` | ECR repository, artifact bucket, the role GitHub Actions assumes |
-| `templates/service.yaml` | Load balancer, ECS service, autoscaling, CodeDeploy, CodePipeline, EventBridge rule |
+| `templates/service.yaml` | Load balancer, orders table, ECS service, autoscaling, CodeDeploy, CodePipeline, EventBridge rule |
 | `deployments/dev/*.yaml` | One GitSync deployment file per stack: which template, which parameters, which tags |
 | `bootstrap/` | The two templates that switch GitSync on. Deployed once from a terminal |
 | `docs/decisions.md` | Each design decision and its business reason |
@@ -161,7 +162,7 @@ These templates pass `cfn-lint` but have not yet been deployed to an account. Wa
 
 Delete in this order, so no stack loses something it still needs:
 
-1. Empty the artifact bucket (all versions) and delete the images in ECR.
+1. Empty the artifact bucket (all versions) and delete the images in ECR. Deleting the service stack also deletes the orders table and its orders.
 2. Delete `onward-dev-orders-service`, then `-registry` and `-network`.
 3. Delete `onward-dev-orders-gitsync`, then `-connection`.
 

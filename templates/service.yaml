@@ -6,7 +6,7 @@ Description: >-
 
 # Reading order:
 #   1. Load balancer      the single public entry point
-#   2. ECS                cluster, task definition, service
+#   2. ECS                orders table, cluster, task definition, service
 #   3. Autoscaling        grow on busy days, shrink afterwards
 #   4. CodeDeploy         blue/green releases with automatic rollback
 #   5. CodePipeline       takes a pushed image and hands it to CodeDeploy
@@ -162,6 +162,31 @@ Resources:
           TargetGroupArn: !Ref BlueTargetGroup
 
   # ================================================================ 2. ECS ==
+  # Where orders are kept. One table shared by every task, so an order
+  # placed through one task is found by all of them and survives releases.
+  # Billed per request: it costs nothing while nobody is ordering.
+  OrdersTable:
+    Type: AWS::DynamoDB::Table
+    # Deleting the stack deletes the orders. Right for a lab environment
+    # that is rebuilt from code; production would use Retain.
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      TableName: !Sub 'onward-${Environment}-${Purpose}'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - {AttributeName: pk, AttributeType: S}
+      KeySchema:
+        - {AttributeName: pk, KeyType: HASH}
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true   # restore to any second of the last 35 days
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
   Cluster:
     Type: AWS::ECS::Cluster
     Properties:
@@ -183,9 +208,11 @@ Resources:
         - {Key: Owner, Value: !Ref Owner}
         - {Key: Environment, Value: !Ref Environment}
 
-  # Used by ECS itself to pull the image and write logs. The application
-  # code never sees these permissions. There is no task role because the
-  # application calls no AWS service.
+  # Two roles, two jobs:
+  #   execution role  used by ECS itself to pull the image and write logs.
+  #                   The application code never sees these permissions.
+  #   task role       what the application may do: read and write the
+  #                   orders table, and nothing else.
   TaskExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -201,6 +228,43 @@ Resources:
                 'aws:SourceAccount': !Ref AWS::AccountId
       ManagedPolicyArns:
         - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy'
+      Tags:
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
+  TaskPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub 'onward-${Environment}-${Purpose}-task'
+      Description: Lets the order application read and write its own orders table.
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: OrdersTableOnly
+            Effect: Allow
+            Action:
+              - dynamodb:GetItem
+              - dynamodb:PutItem
+              - dynamodb:UpdateItem
+              - dynamodb:Scan
+            Resource: !GetAtt OrdersTable.Arn
+
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'onward-${Environment}-${Purpose}-task'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ecs-tasks.amazonaws.com}
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                'aws:SourceAccount': !Ref AWS::AccountId
+      ManagedPolicyArns:
+        - !Ref TaskPolicy
       Tags:
         - {Key: Project, Value: onward}
         - {Key: Owner, Value: !Ref Owner}
@@ -225,6 +289,7 @@ Resources:
         OperatingSystemFamily: LINUX
         CpuArchitecture: X86_64
       ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
       ContainerDefinitions:
         - Name: !Ref ContainerName
           Image: !Sub
@@ -234,6 +299,9 @@ Resources:
           PortMappings:
             - ContainerPort: {'Fn::ImportValue': !Sub '${NetworkStackName}-ContainerPort'}
               Protocol: tcp
+          Environment:
+            - {Name: ORDERS_TABLE, Value: !Ref OrdersTable}
+            - {Name: AWS_DEFAULT_REGION, Value: !Ref AWS::Region}
           LogConfiguration:
             LogDriver: awslogs
             Options:
@@ -430,10 +498,12 @@ Resources:
               - ecs:RegisterTaskDefinition
               - ecs:TagResource
             Resource: '*'   # RegisterTaskDefinition does not support resource scoping
-          - Sid: PassExecutionRoleToEcsOnly
+          - Sid: PassTaskRolesToEcsOnly
             Effect: Allow
             Action: iam:PassRole
-            Resource: !GetAtt TaskExecutionRole.Arn
+            Resource:
+              - !GetAtt TaskExecutionRole.Arn
+              - !GetAtt TaskRole.Arn
             Condition:
               StringEquals:
                 'iam:PassedToService': ecs-tasks.amazonaws.com
@@ -591,3 +661,5 @@ Outputs:
     Value: !Ref Cluster
   ServiceName:
     Value: !GetAtt Service.Name
+  OrdersTableName:
+    Value: !Ref OrdersTable

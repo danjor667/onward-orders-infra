@@ -102,6 +102,7 @@ Resources:
               - cloudwatch:*
               - codedeploy:*
               - codepipeline:*
+              - dynamodb:*
               - ec2:*
               - ecr:*
               - ecs:*

@@ -16,7 +16,8 @@ below.
 | Item | Quantity | Approx. unit price | Approx. per month |
 |---|---|---|---|
 | Interface VPC endpoints (ECR API, ECR Docker, Logs) | 3 endpoints × 2 zones | $0.01 per hour each, plus about $0.01 per GB | $45 to $55 |
-| S3 gateway endpoint | 1 | free | $0 |
+| S3 and DynamoDB gateway endpoints | 2 | free | $0 |
+| DynamoDB orders table | on-demand | about $1.25 per million writes, $0.25 per million reads | cents at this volume; $0 when idle |
 | Application Load Balancer | 1 | about $0.025 per hour, plus usage | $18 to $25 |
 | Fargate tasks (0.25 vCPU, 0.5 GB) | 2 minimum | about $0.012 to $0.015 per hour each | $18 to $22 |
 | CodePipeline, CodeDeploy, ECR, S3, logs | low volume | | a few dollars |
@@ -57,6 +58,7 @@ estimate*, set the Region, and add these services.
 | Amazon ECR | Storage for about 20 images | [ECR pricing](https://aws.amazon.com/ecr/pricing/) |
 | AWS CodePipeline | 1 V2 pipeline, with the number of releases per month | [CodePipeline pricing](https://aws.amazon.com/codepipeline/pricing/) |
 | Amazon CloudWatch | Log ingestion and 14 days of storage | [CloudWatch pricing](https://aws.amazon.com/cloudwatch/pricing/) |
+| Amazon DynamoDB | On-demand capacity, with the number of orders per month (each order is a handful of writes and reads) | [DynamoDB pricing](https://aws.amazon.com/dynamodb/pricing/on-demand/) |
 
 To show Finance the alternative that was rejected, add a second group with
 2 NAT gateways instead of the endpoints ([VPC pricing](https://aws.amazon.com/vpc/pricing/)).

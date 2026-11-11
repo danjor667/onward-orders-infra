@@ -16,12 +16,16 @@ Each decision, with its reason in business terms and what was rejected.
 | 10 | Three stacks (network, registry, service) instead of one | Each file answers one question. A network change cannot accidentally touch the pipeline | One large template: one file to read, but every change risks everything. Nested stacks: GitSync cannot package them |
 | 11 | Image tags are the Git commit and cannot be overwritten; only `latest` moves | Any running version can be traced to the exact commit, which helps audits | Mutable tags: the same tag could mean two different images |
 | 12 | HTTP only on the load balancer | The lab provides no domain name, and a certificate needs one | See limits below |
-| 13 | Region: `eu-central-1` (to confirm) | It is the Region configured in the AWS CLI used to build this. **Confirm or change, and write the justification here**: the Client Profile asks for the Region to be chosen and justified | |
+| 13 | Orders in a DynamoDB table, billed per request | Every task sees the same orders, and they survive releases. It costs nothing when idle and needs no capacity planning | Orders in each container's memory: free, but customers lose their order when another task answers. RDS: a server to size and pay for all month |
+| 14 | The application reaches DynamoDB through a gateway endpoint | Keeps the "no path to the internet" rule, and gateway endpoints are free | An interface endpoint: works, but costs per hour per zone |
+| 15 | Staff passcode generated at first start and kept in the orders table | No secret in any repository, and every task shares the same one | Secrets Manager: the production answer, but needs another paid interface endpoint here. A passcode in the task definition: a credential in Git |
+| 16 | Region: `eu-central-1` (to confirm) | It is the Region configured in the AWS CLI used to build this. **Confirm or change, and write the justification here**: the Client Profile asks for the Region to be chosen and justified | |
 
 ## Limits
 
 - **No HTTPS.** Production needs a domain, an ACM certificate and a 443 listener. Customer data should not travel over plain HTTP.
-- **Orders are stored in memory, per container.** Two containers hold two separate lists and a release empties them. A real order system needs a shared database; storage is outside this lab.
+- **The Operations pages use one shared passcode**, sent over plain HTTP. Production needs HTTPS and real staff sign-in.
+- **The operations dashboard reads the whole orders table.** Fine at this size; a busy system would add an index by status or date.
 - **Idle cost is not zero.** The load balancer and the three interface endpoints are billed while they exist. An idle environment costs nothing only if its stacks are deleted, which is why everything can be rebuilt from the repositories.
 - **The GitSync role is broad.** It can create any `onward-*` IAM role and policy. A permissions boundary would narrow it further.
 - **The connection approval is manual**, once per account.

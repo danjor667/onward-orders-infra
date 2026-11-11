@@ -141,8 +141,9 @@ Resources:
         - {Key: Environment, Value: !Ref Environment}
 
   # The private route table deliberately has NO default route: no internet
-  # gateway, no NAT gateway. The only route added to it is the S3 gateway
-  # endpoint below. This is what "no path to the internet" means in practice.
+  # gateway, no NAT gateway. The only routes added to it are the S3 and
+  # DynamoDB gateway endpoints below. This is what "no path to the internet"
+  # means in practice.
   PrivateRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
@@ -199,11 +200,11 @@ Resources:
       GroupDescription: Application tasks. In from the load balancer only, out over HTTPS to AWS services only.
       VpcId: !Ref Vpc
       SecurityGroupEgress:
-        # The S3 gateway endpoint has no security group of its own, so this
-        # rule cannot name it. It is safe because the private route table has
-        # no internet route: HTTPS can only reach the interface endpoints and
-        # the S3 gateway endpoint.
-        - Description: HTTPS to VPC endpoints (ECR, logs) and the S3 gateway endpoint
+        # Gateway endpoints have no security group of their own, so this
+        # rule cannot name them. It is safe because the private route table
+        # has no internet route: HTTPS can only reach the interface endpoints
+        # and the S3 and DynamoDB gateway endpoints.
+        - Description: HTTPS to VPC endpoints (ECR, logs, S3, DynamoDB)
           IpProtocol: tcp
           FromPort: 443
           ToPort: 443
@@ -255,8 +256,10 @@ Resources:
   #   ecr.api + ecr.dkr  authenticate and pull the image manifest
   #   s3 (gateway)       download the image layers (ECR stores layers in S3)
   #   logs               ship container logs to CloudWatch
-  # The S3 gateway endpoint is free. Each interface endpoint is billed per
-  # hour per Availability Zone (see docs/cost.md).
+  # And what the application itself needs:
+  #   dynamodb (gateway) read and write orders
+  # The two gateway endpoints are free. Each interface endpoint is billed
+  # per hour per Availability Zone (see docs/cost.md).
   S3GatewayEndpoint:
     Type: AWS::EC2::VPCEndpoint
     Properties:
@@ -266,6 +269,19 @@ Resources:
       RouteTableIds: [!Ref PrivateRouteTable]
       Tags:
         - {Key: Name, Value: !Sub 'onward-${Environment}-${Purpose}-s3'}
+        - {Key: Project, Value: onward}
+        - {Key: Owner, Value: !Ref Owner}
+        - {Key: Environment, Value: !Ref Environment}
+
+  DynamoDbGatewayEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcEndpointType: Gateway
+      VpcId: !Ref Vpc
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.dynamodb'
+      RouteTableIds: [!Ref PrivateRouteTable]
+      Tags:
+        - {Key: Name, Value: !Sub 'onward-${Environment}-${Purpose}-dynamodb'}
         - {Key: Project, Value: onward}
         - {Key: Owner, Value: !Ref Owner}
         - {Key: Environment, Value: !Ref Environment}
