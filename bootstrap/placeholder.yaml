@@ -1,0 +1,10 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Onward Logistics orders - bootstrap. An empty stack that CloudFormation Git
+  sync then takes over. Git sync only updates stacks that already exist, so
+  each stack is created once with this placeholder and its first sync
+  replaces it with the real template.
+
+Resources:
+  Placeholder:
+    Type: AWS::CloudFormation::WaitConditionHandle

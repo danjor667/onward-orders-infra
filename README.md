@@ -99,19 +99,25 @@ OWNER="Jordan Steve"
 TAGS="Project=onward Environment=$ENV"
 ```
 
-**1. Create the GitHub connection.**
+**1. Get an approved GitHub connection.** If the account already has one for this GitHub account, reuse it:
 
 ```bash
-aws cloudformation deploy \
-  --stack-name onward-$ENV-orders-connection \
-  --template-file bootstrap/connection.yaml \
-  --parameter-overrides Environment=$ENV Owner="$OWNER" \
-  --tags $TAGS Owner="$OWNER"
+CONNECTION_ARN=$(aws codeconnections list-connections \
+  --query "Connections[?ConnectionStatus=='AVAILABLE'].ConnectionArn | [0]" --output text)
 ```
 
-**2. Approve the connection.** In the AWS console open *Developer Tools → Settings → Connections*, select `onward-dev-orders`, choose *Update pending connection* and grant access to the infrastructure repository. GitHub requires a person to do this once; it cannot be automated.
+Otherwise create one with `bootstrap/connection.yaml`, then approve it in the AWS console (*Developer Tools → Settings → Connections → Update pending connection*). GitHub requires a person to approve it once; it cannot be automated. Either way, the GitHub app behind the connection must be allowed to see this repository (GitHub *Settings → Applications → AWS Connector for GitHub → Configure*).
 
-**3. Switch on GitSync.** This creates the network and registry stacks.
+**2. Create the empty stacks for Git sync to take over.** Git sync only updates stacks that already exist.
+
+```bash
+for STACK in network registry; do
+  aws cloudformation deploy --stack-name onward-$ENV-orders-$STACK \
+    --template-file bootstrap/placeholder.yaml --tags $TAGS Owner="$OWNER"
+done
+```
+
+**3. Switch on Git sync.** Its first sync replaces both placeholders with the real templates.
 
 ```bash
 aws cloudformation deploy \
@@ -119,17 +125,22 @@ aws cloudformation deploy \
   --template-file bootstrap/gitsync.yaml \
   --capabilities CAPABILITY_NAMED_IAM \
   --parameter-overrides Environment=$ENV Owner="$OWNER" \
-      ConnectionStackName=onward-$ENV-orders-connection \
+      ConnectionArn=$CONNECTION_ARN \
       GitHubOwner=danjor667 InfraRepositoryName=onward-orders-infra \
       DeployServiceStack=false \
   --tags $TAGS Owner="$OWNER"
 ```
 
-Wait until `onward-dev-orders-network` and `onward-dev-orders-registry` reach `CREATE_COMPLETE`.
+Wait until `onward-dev-orders-network` and `onward-dev-orders-registry` reach `UPDATE_COMPLETE`. If a sync does not start, push a commit that touches the stack's deployment file.
 
 **4. Push the first image.** In the application repository, set the account ID variable and push to `main` (see its README). Wait for the workflow to finish.
 
-**5. Switch on the service stack.** Run the command from step 3 again with `DeployServiceStack=true`. The service starts, and the pipeline runs once by itself as a first blue/green release.
+**5. Switch on the service stack.** Create its placeholder, then run the command from step 3 again with `DeployServiceStack=true`. The service starts, and the pipeline runs once by itself as a first blue/green release.
+
+```bash
+aws cloudformation deploy --stack-name onward-$ENV-orders-service \
+  --template-file bootstrap/placeholder.yaml --tags $TAGS Owner="$OWNER"
+```
 
 **6. Open the application.**
 
@@ -138,15 +149,9 @@ aws cloudformation describe-stacks --stack-name onward-$ENV-orders-service \
   --query "Stacks[0].Outputs[?OutputKey=='ApplicationUrl'].OutputValue" --output text
 ```
 
-The service stack waits for step 4 because an ECS service cannot start without an image, and the image repository is itself created by GitSync in step 3.
+The service stack waits for step 4 because an ECS service cannot start without an image, and the image repository is itself created by Git sync in step 3.
 
-### To confirm on the first real deployment
-
-These templates pass `cfn-lint` but have not yet been deployed to an account. Watch for these three points the first time:
-
-- **GitSync creating the stacks.** Step 3 assumes a new sync configuration creates its stack straight away. If a stack does not appear, push a commit that touches its deployment file.
-- **The role GitSync deploys with.** The GitSync role carries the deployment permissions itself (`onward-dev-orders-deploy` policy). If a stack fails with an access error, the missing action is added to that policy in `bootstrap/gitsync.yaml`.
-- **Existing GitHub OIDC provider.** An account can hold only one. If the registry stack fails because it already exists, set `CreateGitHubOidcProvider: 'false'` in `deployments/dev/registry.yaml`.
+An AWS account can hold only one GitHub OIDC provider. This account already has one, so `deployments/dev/registry.yaml` sets `CreateGitHubOidcProvider: 'false'`; set it to `'true'` in an account that has none.
 
 ## Proving the client's checks
 

@@ -13,9 +13,11 @@ Parameters:
     Default: orders
   Owner:
     Type: String
-  ConnectionStackName:
+  ConnectionArn:
     Type: String
-    Description: Name of the stack built from connection.yaml.
+    Description: >-
+      ARN of an approved GitHub connection: the output of connection.yaml, or
+      a connection the account already has.
   GitHubOwner:
     Type: String
     Description: GitHub user or organisation that owns the infrastructure repository.
@@ -39,8 +41,7 @@ Resources:
   RepositoryLink:
     Type: AWS::CodeStarConnections::RepositoryLink
     Properties:
-      ConnectionArn:
-        Fn::ImportValue: !Sub '${ConnectionStackName}-ConnectionArn'
+      ConnectionArn: !Ref ConnectionArn
       OwnerId: !Ref GitHubOwner
       RepositoryName: !Ref InfraRepositoryName
       Tags:

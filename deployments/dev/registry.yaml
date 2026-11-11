@@ -8,8 +8,9 @@ parameters:
   GitHubOwner: danjor667
   AppRepositoryName: onward-orders-app
   AppBranch: main
-  # Set to 'false' if this AWS account already has a GitHub OIDC provider.
-  CreateGitHubOidcProvider: 'true'
+  # 'false' because this AWS account already has a GitHub OIDC provider (an
+  # account can hold only one). The release role trusts the existing one.
+  CreateGitHubOidcProvider: 'false'
 
 tags:
   Project: onward
