@@ -8,6 +8,10 @@ parameters:
   GitHubOwner: danjor667
   AppRepositoryName: onward-orders-app
   AppBranch: main
+  # Numeric IDs for GitHub's immutable OIDC subject claims. Look them up with:
+  #   gh api repos/<owner>/<repo> --jq '[.owner.id, .id]'
+  GitHubOwnerId: '109290255'
+  AppRepositoryId: '1453234524'
   # 'false' because this AWS account already has a GitHub OIDC provider (an
   # account can hold only one). The release role trusts the existing one.
   CreateGitHubOidcProvider: 'false'

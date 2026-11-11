@@ -24,6 +24,14 @@ Parameters:
     Type: String
     Default: main
     Description: Only this branch may assume the release role.
+  GitHubOwnerId:
+    Type: String
+    Description: >-
+      Numeric ID of the GitHub owner. GitHub's immutable subject claims include
+      it, so a renamed or re-created account cannot take over the role.
+  AppRepositoryId:
+    Type: String
+    Description: Numeric ID of the application repository, for the same reason.
   CreateGitHubOidcProvider:
     Type: String
     AllowedValues: ['true', 'false']
@@ -215,7 +223,13 @@ Resources:
               StringEquals:
                 'token.actions.githubusercontent.com:aud': sts.amazonaws.com
                 # Only this repository, and only its release branch.
-                'token.actions.githubusercontent.com:sub': !Sub 'repo:${GitHubOwner}/${AppRepositoryName}:ref:refs/heads/${AppBranch}'
+                # Exactly this repository and branch. GitHub sends one of two
+                # subject formats depending on the repository's settings: the
+                # classic name-based one, or the immutable one that adds the
+                # numeric owner and repository IDs. Both are listed.
+                'token.actions.githubusercontent.com:sub':
+                  - !Sub 'repo:${GitHubOwner}/${AppRepositoryName}:ref:refs/heads/${AppBranch}'
+                  - !Sub 'repo:${GitHubOwner}@${GitHubOwnerId}/${AppRepositoryName}@${AppRepositoryId}:ref:refs/heads/${AppBranch}'
       ManagedPolicyArns:
         - !Ref GitHubActionsPolicy
       Tags:
