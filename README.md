@@ -51,6 +51,8 @@ A change to the application travels like this:
 4. CodePipeline hands the image and the bundle to CodeDeploy.
 5. CodeDeploy starts the new version beside the old one, sends 10% of traffic to it for five minutes, then the rest. The old version stays up for ten more minutes so a rollback is instant.
 
+![Architecture: private Fargate tasks behind a public load balancer, VPC endpoints, and the release pipeline](docs/architecture.png)
+
 ## What is in this repository
 
 | Path | What it is |
@@ -60,6 +62,8 @@ A change to the application travels like this:
 | `templates/service.yaml` | Load balancer, orders table, ECS service, autoscaling, CodeDeploy, CodePipeline, EventBridge rule |
 | `deployments/dev/*.yaml` | One GitSync deployment file per stack: which template, which parameters, which tags |
 | `bootstrap/` | The two templates that switch GitSync on. Deployed once from a terminal |
+| `docs/discovery-report.docx` | Discovery report (Word): the problem, options considered, and the business value |
+| `docs/architecture.png` | Architecture diagram |
 | `docs/decisions.md` | Each design decision and its business reason |
 | `docs/cost.md` | What the design costs, including private connectivity |
 
