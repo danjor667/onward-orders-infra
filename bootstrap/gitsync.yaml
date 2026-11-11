@@ -39,13 +39,17 @@ Resources:
   RepositoryLink:
     Type: AWS::CodeStarConnections::RepositoryLink
     Properties:
-      ConnectionArn: {'Fn::ImportValue': !Sub '${ConnectionStackName}-ConnectionArn'}
+      ConnectionArn:
+        Fn::ImportValue: !Sub '${ConnectionStackName}-ConnectionArn'
       OwnerId: !Ref GitHubOwner
       RepositoryName: !Ref InfraRepositoryName
       Tags:
-        - {Key: Project, Value: onward}
-        - {Key: Owner, Value: !Ref Owner}
-        - {Key: Environment, Value: !Ref Environment}
+        - Key: Project
+          Value: onward
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: Environment
+          Value: !Ref Environment
 
   # ------------------------------------------------------- GitSync role ----
   # Two managed policies, kept apart so each can be read on its own:
@@ -194,9 +198,12 @@ Resources:
         - !Ref GitSyncPolicy
         - !Ref DeployPolicy
       Tags:
-        - {Key: Project, Value: onward}
-        - {Key: Owner, Value: !Ref Owner}
-        - {Key: Environment, Value: !Ref Environment}
+        - Key: Project
+          Value: onward
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: Environment
+          Value: !Ref Environment
 
   # ------------------------------------------------ One sync per stack ----
   # Each sync watches one deployment file. That file names the template and

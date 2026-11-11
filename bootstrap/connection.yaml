@@ -24,11 +24,15 @@ Resources:
       ConnectionName: !Sub 'onward-${Environment}-${Purpose}'
       ProviderType: GitHub
       Tags:
-        - {Key: Project, Value: onward}
-        - {Key: Owner, Value: !Ref Owner}
-        - {Key: Environment, Value: !Ref Environment}
+        - Key: Project
+          Value: onward
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: Environment
+          Value: !Ref Environment
 
 Outputs:
   ConnectionArn:
     Value: !Ref GitHubConnection
-    Export: {Name: !Sub '${AWS::StackName}-ConnectionArn'}
+    Export:
+      Name: !Sub '${AWS::StackName}-ConnectionArn'

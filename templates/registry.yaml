@@ -80,9 +80,12 @@ Resources:
             ]
           }
       Tags:
-        - {Key: Project, Value: onward}
-        - {Key: Owner, Value: !Ref Owner}
-        - {Key: Environment, Value: !Ref Environment}
+        - Key: Project
+          Value: onward
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: Environment
+          Value: !Ref Environment
 
   # ----------------------------------------------------- Artifact bucket ----
   # Two uses, two prefixes:
@@ -120,9 +123,12 @@ Resources:
             Prefix: !Sub 'onward-${Environment}-${Purpose}/'
             ExpirationInDays: 30
       Tags:
-        - {Key: Project, Value: onward}
-        - {Key: Owner, Value: !Ref Owner}
-        - {Key: Environment, Value: !Ref Environment}
+        - Key: Project
+          Value: onward
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: Environment
+          Value: !Ref Environment
 
   # A bucket policy is a resource policy on the bucket, not an inline IAM
   # identity policy.
@@ -155,9 +161,12 @@ Resources:
       Url: https://token.actions.githubusercontent.com
       ClientIdList: [sts.amazonaws.com]
       Tags:
-        - {Key: Project, Value: onward}
-        - {Key: Owner, Value: !Ref Owner}
-        - {Key: Environment, Value: !Ref Environment}
+        - Key: Project
+          Value: onward
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: Environment
+          Value: !Ref Environment
 
   GitHubActionsPolicy:
     Type: AWS::IAM::ManagedPolicy
@@ -210,27 +219,35 @@ Resources:
       ManagedPolicyArns:
         - !Ref GitHubActionsPolicy
       Tags:
-        - {Key: Project, Value: onward}
-        - {Key: Owner, Value: !Ref Owner}
-        - {Key: Environment, Value: !Ref Environment}
+        - Key: Project
+          Value: onward
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: Environment
+          Value: !Ref Environment
 
 # The service stack reads these with Fn::ImportValue.
 Outputs:
   RepositoryName:
     Value: !Ref Repository
-    Export: {Name: !Sub '${AWS::StackName}-RepositoryName'}
+    Export:
+      Name: !Sub '${AWS::StackName}-RepositoryName'
   RepositoryArn:
     Value: !GetAtt Repository.Arn
-    Export: {Name: !Sub '${AWS::StackName}-RepositoryArn'}
+    Export:
+      Name: !Sub '${AWS::StackName}-RepositoryArn'
   RepositoryUri:
     Value: !GetAtt Repository.RepositoryUri
-    Export: {Name: !Sub '${AWS::StackName}-RepositoryUri'}
+    Export:
+      Name: !Sub '${AWS::StackName}-RepositoryUri'
   ArtifactBucketName:
     Value: !Ref ArtifactBucket
-    Export: {Name: !Sub '${AWS::StackName}-ArtifactBucketName'}
+    Export:
+      Name: !Sub '${AWS::StackName}-ArtifactBucketName'
   ArtifactBucketArn:
     Value: !GetAtt ArtifactBucket.Arn
-    Export: {Name: !Sub '${AWS::StackName}-ArtifactBucketArn'}
+    Export:
+      Name: !Sub '${AWS::StackName}-ArtifactBucketArn'
   GitHubActionsRoleArn:
     Description: Not secret. The application workflow builds this ARN from the account ID.
     Value: !GetAtt GitHubActionsRole.Arn

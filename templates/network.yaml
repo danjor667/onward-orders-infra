@@ -36,19 +36,27 @@ Resources:
       EnableDnsSupport: true     # both DNS settings are required for
       EnableDnsHostnames: true   # private DNS on the interface endpoints
       Tags:
-        - {Key: Name, Value: !Sub 'onward-${Environment}-${Purpose}-vpc'}
-        - {Key: Project, Value: onward}
-        - {Key: Owner, Value: !Ref Owner}
-        - {Key: Environment, Value: !Ref Environment}
+        - Key: Name
+          Value: !Sub 'onward-${Environment}-${Purpose}-vpc'
+        - Key: Project
+          Value: onward
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: Environment
+          Value: !Ref Environment
 
   InternetGateway:
     Type: AWS::EC2::InternetGateway
     Properties:
       Tags:
-        - {Key: Name, Value: !Sub 'onward-${Environment}-${Purpose}-igw'}
-        - {Key: Project, Value: onward}
-        - {Key: Owner, Value: !Ref Owner}
-        - {Key: Environment, Value: !Ref Environment}
+        - Key: Name
+          Value: !Sub 'onward-${Environment}-${Purpose}-igw'
+        - Key: Project
+          Value: onward
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: Environment
+          Value: !Ref Environment
 
   InternetGatewayAttachment:
     Type: AWS::EC2::VPCGatewayAttachment
@@ -65,10 +73,14 @@ Resources:
       CidrBlock: !Select [0, !Cidr [!Ref VpcCidr, 4, 8]]
       MapPublicIpOnLaunch: false
       Tags:
-        - {Key: Name, Value: !Sub 'onward-${Environment}-${Purpose}-public-a'}
-        - {Key: Project, Value: onward}
-        - {Key: Owner, Value: !Ref Owner}
-        - {Key: Environment, Value: !Ref Environment}
+        - Key: Name
+          Value: !Sub 'onward-${Environment}-${Purpose}-public-a'
+        - Key: Project
+          Value: onward
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: Environment
+          Value: !Ref Environment
 
   PublicSubnetB:
     Type: AWS::EC2::Subnet
@@ -78,20 +90,28 @@ Resources:
       CidrBlock: !Select [1, !Cidr [!Ref VpcCidr, 4, 8]]
       MapPublicIpOnLaunch: false
       Tags:
-        - {Key: Name, Value: !Sub 'onward-${Environment}-${Purpose}-public-b'}
-        - {Key: Project, Value: onward}
-        - {Key: Owner, Value: !Ref Owner}
-        - {Key: Environment, Value: !Ref Environment}
+        - Key: Name
+          Value: !Sub 'onward-${Environment}-${Purpose}-public-b'
+        - Key: Project
+          Value: onward
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: Environment
+          Value: !Ref Environment
 
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
       VpcId: !Ref Vpc
       Tags:
-        - {Key: Name, Value: !Sub 'onward-${Environment}-${Purpose}-public'}
-        - {Key: Project, Value: onward}
-        - {Key: Owner, Value: !Ref Owner}
-        - {Key: Environment, Value: !Ref Environment}
+        - Key: Name
+          Value: !Sub 'onward-${Environment}-${Purpose}-public'
+        - Key: Project
+          Value: onward
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: Environment
+          Value: !Ref Environment
 
   PublicDefaultRoute:
     Type: AWS::EC2::Route
@@ -122,10 +142,14 @@ Resources:
       CidrBlock: !Select [2, !Cidr [!Ref VpcCidr, 4, 8]]
       MapPublicIpOnLaunch: false
       Tags:
-        - {Key: Name, Value: !Sub 'onward-${Environment}-${Purpose}-private-a'}
-        - {Key: Project, Value: onward}
-        - {Key: Owner, Value: !Ref Owner}
-        - {Key: Environment, Value: !Ref Environment}
+        - Key: Name
+          Value: !Sub 'onward-${Environment}-${Purpose}-private-a'
+        - Key: Project
+          Value: onward
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: Environment
+          Value: !Ref Environment
 
   PrivateSubnetB:
     Type: AWS::EC2::Subnet
@@ -135,10 +159,14 @@ Resources:
       CidrBlock: !Select [3, !Cidr [!Ref VpcCidr, 4, 8]]
       MapPublicIpOnLaunch: false
       Tags:
-        - {Key: Name, Value: !Sub 'onward-${Environment}-${Purpose}-private-b'}
-        - {Key: Project, Value: onward}
-        - {Key: Owner, Value: !Ref Owner}
-        - {Key: Environment, Value: !Ref Environment}
+        - Key: Name
+          Value: !Sub 'onward-${Environment}-${Purpose}-private-b'
+        - Key: Project
+          Value: onward
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: Environment
+          Value: !Ref Environment
 
   # The private route table deliberately has NO default route: no internet
   # gateway, no NAT gateway. The only routes added to it are the S3 and
@@ -149,10 +177,14 @@ Resources:
     Properties:
       VpcId: !Ref Vpc
       Tags:
-        - {Key: Name, Value: !Sub 'onward-${Environment}-${Purpose}-private'}
-        - {Key: Project, Value: onward}
-        - {Key: Owner, Value: !Ref Owner}
-        - {Key: Environment, Value: !Ref Environment}
+        - Key: Name
+          Value: !Sub 'onward-${Environment}-${Purpose}-private'
+        - Key: Project
+          Value: onward
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: Environment
+          Value: !Ref Environment
 
   PrivateSubnetARouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
@@ -188,10 +220,14 @@ Resources:
           ToPort: !Ref ContainerPort
           DestinationSecurityGroupId: !Ref TaskSecurityGroup
       Tags:
-        - {Key: Name, Value: !Sub 'onward-${Environment}-${Purpose}-alb'}
-        - {Key: Project, Value: onward}
-        - {Key: Owner, Value: !Ref Owner}
-        - {Key: Environment, Value: !Ref Environment}
+        - Key: Name
+          Value: !Sub 'onward-${Environment}-${Purpose}-alb'
+        - Key: Project
+          Value: onward
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: Environment
+          Value: !Ref Environment
 
   TaskSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -210,10 +246,14 @@ Resources:
           ToPort: 443
           CidrIp: 0.0.0.0/0
       Tags:
-        - {Key: Name, Value: !Sub 'onward-${Environment}-${Purpose}-task'}
-        - {Key: Project, Value: onward}
-        - {Key: Owner, Value: !Ref Owner}
-        - {Key: Environment, Value: !Ref Environment}
+        - Key: Name
+          Value: !Sub 'onward-${Environment}-${Purpose}-task'
+        - Key: Project
+          Value: onward
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: Environment
+          Value: !Ref Environment
 
   # Separate resource (not inline) to avoid a circular reference between the
   # load balancer group and the task group.
@@ -246,10 +286,14 @@ Resources:
           IpProtocol: '-1'
           CidrIp: 127.0.0.1/32
       Tags:
-        - {Key: Name, Value: !Sub 'onward-${Environment}-${Purpose}-endpoints'}
-        - {Key: Project, Value: onward}
-        - {Key: Owner, Value: !Ref Owner}
-        - {Key: Environment, Value: !Ref Environment}
+        - Key: Name
+          Value: !Sub 'onward-${Environment}-${Purpose}-endpoints'
+        - Key: Project
+          Value: onward
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: Environment
+          Value: !Ref Environment
 
   # ------------------------------------------------------ VPC endpoints ----
   # What Fargate needs to start a task without internet access:
@@ -268,10 +312,14 @@ Resources:
       ServiceName: !Sub 'com.amazonaws.${AWS::Region}.s3'
       RouteTableIds: [!Ref PrivateRouteTable]
       Tags:
-        - {Key: Name, Value: !Sub 'onward-${Environment}-${Purpose}-s3'}
-        - {Key: Project, Value: onward}
-        - {Key: Owner, Value: !Ref Owner}
-        - {Key: Environment, Value: !Ref Environment}
+        - Key: Name
+          Value: !Sub 'onward-${Environment}-${Purpose}-s3'
+        - Key: Project
+          Value: onward
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: Environment
+          Value: !Ref Environment
 
   DynamoDbGatewayEndpoint:
     Type: AWS::EC2::VPCEndpoint
@@ -281,10 +329,14 @@ Resources:
       ServiceName: !Sub 'com.amazonaws.${AWS::Region}.dynamodb'
       RouteTableIds: [!Ref PrivateRouteTable]
       Tags:
-        - {Key: Name, Value: !Sub 'onward-${Environment}-${Purpose}-dynamodb'}
-        - {Key: Project, Value: onward}
-        - {Key: Owner, Value: !Ref Owner}
-        - {Key: Environment, Value: !Ref Environment}
+        - Key: Name
+          Value: !Sub 'onward-${Environment}-${Purpose}-dynamodb'
+        - Key: Project
+          Value: onward
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: Environment
+          Value: !Ref Environment
 
   EcrApiEndpoint:
     Type: AWS::EC2::VPCEndpoint
@@ -296,10 +348,14 @@ Resources:
       SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
       SecurityGroupIds: [!Ref EndpointSecurityGroup]
       Tags:
-        - {Key: Name, Value: !Sub 'onward-${Environment}-${Purpose}-ecr-api'}
-        - {Key: Project, Value: onward}
-        - {Key: Owner, Value: !Ref Owner}
-        - {Key: Environment, Value: !Ref Environment}
+        - Key: Name
+          Value: !Sub 'onward-${Environment}-${Purpose}-ecr-api'
+        - Key: Project
+          Value: onward
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: Environment
+          Value: !Ref Environment
 
   EcrDkrEndpoint:
     Type: AWS::EC2::VPCEndpoint
@@ -311,10 +367,14 @@ Resources:
       SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
       SecurityGroupIds: [!Ref EndpointSecurityGroup]
       Tags:
-        - {Key: Name, Value: !Sub 'onward-${Environment}-${Purpose}-ecr-dkr'}
-        - {Key: Project, Value: onward}
-        - {Key: Owner, Value: !Ref Owner}
-        - {Key: Environment, Value: !Ref Environment}
+        - Key: Name
+          Value: !Sub 'onward-${Environment}-${Purpose}-ecr-dkr'
+        - Key: Project
+          Value: onward
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: Environment
+          Value: !Ref Environment
 
   LogsEndpoint:
     Type: AWS::EC2::VPCEndpoint
@@ -326,28 +386,38 @@ Resources:
       SubnetIds: [!Ref PrivateSubnetA, !Ref PrivateSubnetB]
       SecurityGroupIds: [!Ref EndpointSecurityGroup]
       Tags:
-        - {Key: Name, Value: !Sub 'onward-${Environment}-${Purpose}-logs'}
-        - {Key: Project, Value: onward}
-        - {Key: Owner, Value: !Ref Owner}
-        - {Key: Environment, Value: !Ref Environment}
+        - Key: Name
+          Value: !Sub 'onward-${Environment}-${Purpose}-logs'
+        - Key: Project
+          Value: onward
+        - Key: Owner
+          Value: !Ref Owner
+        - Key: Environment
+          Value: !Ref Environment
 
 # The service stack reads these with Fn::ImportValue.
 Outputs:
   VpcId:
     Value: !Ref Vpc
-    Export: {Name: !Sub '${AWS::StackName}-VpcId'}
+    Export:
+      Name: !Sub '${AWS::StackName}-VpcId'
   PublicSubnetIds:
     Value: !Join [',', [!Ref PublicSubnetA, !Ref PublicSubnetB]]
-    Export: {Name: !Sub '${AWS::StackName}-PublicSubnetIds'}
+    Export:
+      Name: !Sub '${AWS::StackName}-PublicSubnetIds'
   PrivateSubnetIds:
     Value: !Join [',', [!Ref PrivateSubnetA, !Ref PrivateSubnetB]]
-    Export: {Name: !Sub '${AWS::StackName}-PrivateSubnetIds'}
+    Export:
+      Name: !Sub '${AWS::StackName}-PrivateSubnetIds'
   LoadBalancerSecurityGroupId:
     Value: !Ref LoadBalancerSecurityGroup
-    Export: {Name: !Sub '${AWS::StackName}-LoadBalancerSecurityGroupId'}
+    Export:
+      Name: !Sub '${AWS::StackName}-LoadBalancerSecurityGroupId'
   TaskSecurityGroupId:
     Value: !Ref TaskSecurityGroup
-    Export: {Name: !Sub '${AWS::StackName}-TaskSecurityGroupId'}
+    Export:
+      Name: !Sub '${AWS::StackName}-TaskSecurityGroupId'
   ContainerPort:
     Value: !Ref ContainerPort
-    Export: {Name: !Sub '${AWS::StackName}-ContainerPort'}
+    Export:
+      Name: !Sub '${AWS::StackName}-ContainerPort'
