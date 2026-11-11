@@ -3,13 +3,27 @@
 Prices below are approximate on-demand list prices and differ by Region.
 Monthly figures assume 730 hours.
 
-**Official estimate:** build and share one in the
-[AWS Pricing Calculator](https://calculator.aws/#/). It is free, needs no
-AWS account, and produces a public link you can hand to the Finance Lead.
-The inputs to enter are listed in [Building the estimate](#building-the-estimate)
-below.
+**Official estimate (public link, no AWS account needed):**
+[Onward Logistics - Lab 2 Release Pipeline (eu-central-1)](https://calculator.aws/#/estimate?id=ae373aefeaf478df91977c610014d4254553f5b1)
+on the AWS Pricing Calculator: **USD 96.34 per month**, saved on 11 November 2026.
+The link expires after one year.
 
-> Shared estimate link: _paste the link from "Share" in the calculator here_
+| Line in the public estimate | USD / month |
+|---|---|
+| AWS Fargate: 2 tasks all month, 0.25 vCPU and 0.5 GB each | 20.72 |
+| AWS Fargate: extra tasks for busy days and blue/green releases (140 task-hours) | 1.99 |
+| Elastic Load Balancing: 1 Application Load Balancer, low traffic | 19.79 |
+| Amazon VPC: 3 interface endpoints (ecr.api, ecr.dkr, logs) in 2 zones, 10 GB processed | 52.66 |
+| Amazon DynamoDB: on-demand, 120,000 writes, 300,000 reads, 1 GB | 0.42 |
+| Amazon ECR: about 2 GB of release images | 0.20 |
+| AWS CodePipeline (V2): about 20 releases, 380 action-minutes (first 100 free) | 0.56 |
+| **Total** | **96.34** |
+
+**What private connectivity costs:** USD 52.66 a month, 55% of the bill. It is fixed: the
+interface endpoints are billed every hour in each zone whether or not anything is released.
+The S3 and DynamoDB gateway endpoints are free. Not included above: CloudWatch Logs and the
+rollback alarm (cents at this volume), and CodeDeploy, EventBridge and ECS, which have no
+charge for this setup.
 
 ## What runs all the time
 
