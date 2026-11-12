@@ -62,9 +62,8 @@ A change to the application travels like this:
 | `templates/service.yaml` | Load balancer, orders table, ECS service, autoscaling, CodeDeploy, CodePipeline, EventBridge rule |
 | `deployments/dev/*.yaml` | One GitSync deployment file per stack: which template, which parameters, which tags |
 | `bootstrap/` | The two templates that switch GitSync on. Deployed once from a terminal |
-| `docs/discovery-report.docx` | Discovery report (Word): the problem, options considered, and the business value |
+| `docs/discover-report2.docx` | Discovery report (Word): the problem, options considered, the business value and the key design decisions |
 | `docs/architecture.png` | Architecture diagram |
-| `docs/decisions.md` | Each design decision and its business reason |
 | `docs/cost.md` | What the design costs, including private connectivity |
 
 Stacks and what depends on what:
